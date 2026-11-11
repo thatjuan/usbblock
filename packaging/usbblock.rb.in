@@ -1,0 +1,32 @@
+# frozen_string_literal: true
+
+# Installs the prebuilt universal macOS release.
+class Usbblock < Formula
+  desc "Hide chosen USB devices, or just their audio, from macOS"
+  homepage "https://github.com/thatjuan/usbblock"
+  url "https://github.com/thatjuan/usbblock/releases/download/v@VERSION@/usbblock-macos.tar.gz"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on macos: :sonoma
+
+  def install
+    bin.install "usbblock"
+  end
+
+  def caveats
+    <<~EOS
+      Pick the devices to block, then start the daemon:
+        usbblock list
+        sudo usbblock add
+        sudo usbblock enable
+
+      After `brew upgrade usbblock`, run `sudo usbblock enable` again so the
+      daemon picks up the new version. `usbblock status` warns when they differ.
+    EOS
+  end
+
+  test do
+    assert_equal version.to_s, shell_output("#{bin}/usbblock --version").strip
+  end
+end
