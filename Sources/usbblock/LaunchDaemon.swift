@@ -22,6 +22,7 @@ enum LaunchDaemon {
         print("Imported \(config.entries.count) devices from the previous install.")
     }
 
+    /// Copies this binary to a stable path and starts a boot daemon using saved rules.
     static func install() throws {
         try FileManager.default.createDirectory(atPath: "/usr/local/libexec", withIntermediateDirectories: true)
         try writeAtomic(Data(contentsOf: URL(fileURLWithPath: executablePath())), to: binaryPath, mode: 0o755)
@@ -45,6 +46,7 @@ enum LaunchDaemon {
         if config.entries.isEmpty { print("No devices configured yet. Add some with: sudo usbblock add") }
     }
 
+    /// Stops the job and removes its binary and state, keeping config and logs.
     static func uninstall() throws {
         try launchctl(["bootout", "system", path], ignoreFailure: true)
         for file in [path, binaryPath, DaemonState.path] where FileManager.default.fileExists(atPath: file) {
@@ -53,10 +55,12 @@ enum LaunchDaemon {
         print("Daemon disabled. Blocked devices are back. Configuration kept at \(Config.path).")
     }
 
+    /// Restarts the installed job so it rereads the config.
     static func reload() throws {
         try launchctl(["kickstart", "-k", "system/\(label)"])
     }
 
+    /// Runs launchctl synchronously and reports failures unless explicitly ignored.
     private static func launchctl(_ arguments: [String], ignoreFailure: Bool = false) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")

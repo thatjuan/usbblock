@@ -1,11 +1,13 @@
 import ArgumentParser
 import USBBlockCore
 
+/// Removes a blocking rule by ID or interactive selection.
 struct Remove: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Remove a device from the block configuration.")
 
     @Argument(help: "Hex vendor:product[:audio]; omit to pick a configured entry.") var id: DeviceID?
 
+    /// Deletes the selected rule in either mode and reloads an installed daemon.
     func run() throws {
         try checkPickerInput(id)
         try requireRoot()

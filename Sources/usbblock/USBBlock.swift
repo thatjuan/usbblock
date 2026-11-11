@@ -3,11 +3,19 @@ import Darwin
 import Foundation
 import USBBlockCore
 
+/// Entry point for device selection, blocking and daemon management.
 @main
 struct USBBlock: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "usbblock",
-        abstract: "Keep chosen USB devices, or just their audio, away from macOS.",
+        abstract: "Hide chosen USB devices, or just their audio, from macOS.",
+        discussion: """
+            Whole-device capture detaches every driver from a matching USB device.
+            Audio-only rules claim USB Audio interfaces and keep other functions available.
+            Blocking restarts usbaudiod, which briefly interrupts other USB audio.
+            Use add to save rules, then enable to block across replugs, sleep and reboots.
+            The daemon runs as root; disable stops it and restores blocked devices.
+            """,
         version: usbblockVersion,
         subcommands: [List.self, Add.self, Remove.self, Status.self, Enable.self, Disable.self, Logs.self, Run.self]
     )
@@ -23,6 +31,7 @@ struct CLIError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
+/// Reads saved rules; a missing config means no devices are blocked.
 func readConfig() throws -> Config {
     do {
         return try Config(parsing: String(contentsOfFile: Config.path, encoding: .utf8))
@@ -31,6 +40,7 @@ func readConfig() throws -> Config {
     }
 }
 
+/// Saves rules atomically with root ownership and readable permissions.
 func writeConfig(_ config: Config) throws {
     try writeAtomic(Data(config.formatted().utf8), to: Config.path, mode: 0o644)
 }
@@ -43,6 +53,7 @@ func runningState() -> DaemonState? {
     return state
 }
 
+/// Prints rows with aligned columns sized to their widest cell.
 func printTable(_ rows: [[String]]) {
     guard let first = rows.first else { return }
     let widths = first.indices.map { column in rows.map { $0[column].count }.max() ?? 0 }
@@ -60,6 +71,7 @@ func checkPickerInput(_ id: DeviceID?) throws {
     }
 }
 
+/// Reads a trimmed, lowercase reply from the interactive terminal.
 func prompt(_ text: String) throws -> String {
     print(text, terminator: " ")
     fflush(stdout)
@@ -67,6 +79,7 @@ func prompt(_ text: String) throws -> String {
     return answer.trimmingCharacters(in: .whitespaces).lowercased()
 }
 
+/// Converts a one-based menu choice into a checked array index.
 func pickIndex(count: Int, question: String) throws -> Int {
     guard count > 0 else { throw CLIError("No devices to choose from.") }
     guard let number = Int(try prompt(question)), (1...count).contains(number) else {
@@ -75,6 +88,7 @@ func pickIndex(count: Int, question: String) throws -> Int {
     return number - 1
 }
 
+/// Reloads an installed job after rule changes, or explains how to start one.
 func reloadDaemon() throws {
     if LaunchDaemon.isInstalled {
         try LaunchDaemon.reload()

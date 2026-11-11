@@ -30,6 +30,7 @@ struct AttachedDevice {
 
 /// Reads USB device properties without opening or claiming hardware.
 enum USBRegistry {
+    /// Enumerates attached instances, including captured devices and hubs.
     static func attached() throws -> [AttachedDevice] {
         var iterator: io_iterator_t = 0
         let result = IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOUSBHostDevice"), &iterator)
@@ -63,6 +64,7 @@ enum USBRegistry {
         return DaemonState.Blocked(id: id, name: device.name, location: device.location)
     }
 
+    /// Builds one device row from its registry properties and interface classes.
     private static func device(_ service: io_service_t) -> AttachedDevice? {
         guard let vendor: Int = property(service, "idVendor"),
               let product: Int = property(service, "idProduct"),
@@ -89,6 +91,7 @@ enum USBRegistry {
         )
     }
 
+    /// Reads a registry property as the requested Swift type.
     private static func property<T>(_ service: io_service_t, _ key: String) -> T? {
         IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? T
     }

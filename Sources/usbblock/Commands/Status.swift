@@ -2,9 +2,11 @@ import ArgumentParser
 import Foundation
 import USBBlockCore
 
+/// Reports the daemon version and the state of each configured rule.
 struct Status: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Show daemon and configured device state.")
 
+    /// Combines config, registry and live state to show blocked or waiting devices.
     func run() throws {
         let config = try readConfig()
         let state = runningState()

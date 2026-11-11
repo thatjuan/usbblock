@@ -3,11 +3,13 @@ import Darwin
 import Foundation
 import USBBlockCore
 
+/// Runs device blocking in the foreground until interrupted.
 struct Run: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Block devices in the foreground; Ctrl-C releases them.")
 
     @Argument(help: "Block exactly these IDs, or use the config if omitted.") var ids: [DeviceID] = []
 
+    /// Watches explicit IDs or saved rules and releases claims on termination.
     func run() throws {
         try requireRoot()
         let selected: [DeviceID]
