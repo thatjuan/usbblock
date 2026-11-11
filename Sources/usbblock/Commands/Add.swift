@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import USBBlockCore
 
+/// Adds or changes one blocking rule, with an interactive device picker.
 struct Add: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Add a device to the block configuration.")
 
@@ -9,6 +10,7 @@ struct Add: ParsableCommand {
     @Option(help: "Store this device name in the config.") var name: String?
     @Flag(help: "Allow blocking a whole device with keyboard/mouse interfaces.") var force = false
 
+    /// Selects a device, checks whole-device HID safety, saves the rule and reloads.
     func run() throws {
         try checkPickerInput(id)
         try requireRoot()

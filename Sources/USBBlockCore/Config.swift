@@ -11,6 +11,7 @@ public struct ConfigError: Error, Equatable, CustomStringConvertible {
 
 /// Ordered block rules and optional device names from usbblock.conf.
 public struct Config: Equatable {
+    /// One blocking rule and its optional human-readable name.
     public struct Entry: Equatable {
         public var id: DeviceID
         public var name: String?
@@ -26,6 +27,7 @@ public struct Config: Equatable {
 
     public init(entries: [Entry] = []) { self.entries = entries }
 
+    /// Parses hex IDs and optional names after #, preserving line numbers on errors.
     public init(parsing text: String) throws(ConfigError) {
         entries = []
         for (offset, line) in text.components(separatedBy: "\n").enumerated() {
@@ -38,6 +40,7 @@ public struct Config: Equatable {
         }
     }
 
+    /// Serializes rules with a help header and one optional name comment per line.
     public func formatted() -> String {
         let header = "# usbblock devices. Edit with `sudo usbblock add` / `sudo usbblock remove`,\n# or by hand and then `sudo usbblock enable` to reload.\n"
         return header + entries.map { entry in
@@ -47,6 +50,7 @@ public struct Config: Equatable {
         }.joined()
     }
 
+    /// Describes whether adding a rule inserted it, kept it or changed its mode.
     public enum UpsertResult: Equatable { case added, unchanged, modeChanged }
 
     /// Replaces a device's mode in place; repeated additions leave its name untouched.

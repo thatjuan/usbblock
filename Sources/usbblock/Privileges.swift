@@ -7,6 +7,7 @@ func requireRoot() throws {
     try replaceProcess("/usr/bin/sudo", arguments: [executablePath()] + CommandLine.arguments.dropFirst())
 }
 
+/// Resolves the running binary so sudo and daemon installs use the same file.
 func executablePath() -> String {
     Bundle.main.executableURL!.resolvingSymlinksInPath().path
 }

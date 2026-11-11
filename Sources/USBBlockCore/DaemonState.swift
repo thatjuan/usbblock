@@ -8,6 +8,7 @@ public struct DaemonState: Codable, Equatable {
     public var started: Date
     public var blocked: [Blocked]
 
+    /// One blocked device instance, identified by rule and bus location.
     public struct Blocked: Codable, Hashable {
         public var id: DeviceID
         public var name: String

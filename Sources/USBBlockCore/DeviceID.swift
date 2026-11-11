@@ -7,6 +7,7 @@ public struct DeviceID: Hashable, Sendable, Codable, CustomStringConvertible {
     /// Claim only USB Audio interfaces instead of capturing the whole device.
     public let audioOnly: Bool
 
+    /// Parses vendor:product[:audio], rejecting malformed or out-of-range IDs.
     public init?(_ text: String) {
         let parts = text.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 2 || (parts.count == 3 && parts[2] == "audio"),
@@ -26,10 +27,12 @@ public struct DeviceID: Hashable, Sendable, Codable, CustomStringConvertible {
         String(format: "%04x:%04x", vendor, product) + (audioOnly ? ":audio" : "")
     }
 
+    /// Compares vendor and product IDs regardless of blocking mode.
     public func matches(_ other: DeviceID) -> Bool {
         vendor == other.vendor && product == other.product
     }
 
+    /// Decodes the same hex string accepted by the CLI and config file.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let text = try container.decode(String.self)
@@ -39,6 +42,7 @@ public struct DeviceID: Hashable, Sendable, Codable, CustomStringConvertible {
         self = id
     }
 
+    /// Stores the canonical hex string, including the optional audio suffix.
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(description)

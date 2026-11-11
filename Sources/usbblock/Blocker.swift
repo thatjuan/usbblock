@@ -1,20 +1,21 @@
-// usbblock: keeps chosen USB devices, or just their audio, away from macOS.
+// usbblock hides chosen USB devices, or just their audio, from macOS.
 //
-// Whole devices are captured (the mechanism VM apps use for USB passthrough), which
-// detaches every macOS driver from them, so e.g. a monitor's built-in audio never
-// reaches CoreAudio. Root can capture without the com.apple.vm.device-access
-// entitlement. When this process exits, macOS resets the devices and they come back.
+// Whole devices are captured with IOUSBHostDevice's device-capture option, the
+// mechanism VM apps use for USB passthrough. Capture detaches every macOS driver
+// from that device. Root does not need the com.apple.vm.device-access entitlement.
+// When the process exits, macOS resets captured devices and they come back.
 //
-// With ":audio", only the device's USB Audio interfaces are claimed, so a camera keeps
-// its video but loses its mic. Those interfaces are held open by usbaudiod, which
-// ignores close requests, so we kill it and open them in the moment before launchd
-// respawns it.
+// With ":audio", IOUSBHostInterface claims only USB Audio interfaces (class 1), so
+// a camera keeps its video. usbaudiod holds these and ignores close requests; we
+// kill it and claim them in the gap before launchd restarts it.
 //
-// macOS 27's userspace USB audio driver (usbaudiod) doesn't notice when its clients
-// are torn down or released, so CoreAudio keeps a stale view either way. We restart it
-// after claiming and again on exit; launchd respawns it and it rescans.
+// On recent macOS, usbaudiod keeps a stale view when devices go away. We wait 5s
+// after the latest capture or pending audio claim, then restart it so CoreAudio
+// drops stale entries. This batches a display and its hub into one restart. Other
+// USB audio blips briefly; launchd's 10s restart throttle can make repeated restarts
+// cause longer gaps. On exit, audio-only claims are released and usbaudiod restarts.
 //
-// Usage: sudo usbblock run [vendor:product[:audio] ...]   (hex IDs, e.g. 043e:9a4b)
+// Usage: sudo usbblock run [vendor:product[:audio] ...] (hex IDs, e.g. 043e:9a4b)
 
 import Foundation
 import IOKit
@@ -26,12 +27,13 @@ let serviceTerminated: UInt32 = 0xE000_0010
 /// bInterfaceClass for USB Audio.
 let audioInterfaceClass = 1
 
+/// Writes a timestamped daemon message to standard error for launchd to collect.
 func log(_ message: String) {
     let stamp = Date().formatted(.iso8601)
     FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
 }
 
-/// Kills usbaudiod; launchd respawns it within milliseconds.
+/// Kills usbaudiod so launchd restarts it, subject to its restart throttle.
 func killUSBAudio() {
     let killall = Process()
     killall.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
@@ -40,16 +42,18 @@ func killUSBAudio() {
     killall.waitUntilExit()
 }
 
-/// Watches for matching devices and interfaces and holds a claim on each one.
-/// All state is touched only on `queue`.
+/// Watches matching devices for capture or audio-interface claims.
+/// Capture and claim state is confined to `queue`.
 final class Blocker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "usbblock")
     private let port: IONotificationPortRef
     private var iterators: [io_iterator_t] = []
+    /// Keeps a whole-device capture alive with its public state record.
     private struct Capture {
         let device: IOUSBHostDevice
         let blocked: DaemonState.Blocked?
     }
+    /// Keeps an audio interface open with its owning device's state record.
     private struct Claim {
         let interface: IOUSBHostInterface
         let blocked: DaemonState.Blocked?
@@ -62,11 +66,13 @@ final class Blocker: @unchecked Sendable {
     private var pendingAudioRestart: DispatchWorkItem?
     private var restartAttempts = 0
 
+    /// Delivers IOKit match notifications on the same queue as capture state.
     init() {
         port = IONotificationPortCreate(kIOMainPortDefault)
         IONotificationPortSetDispatchQueue(port, queue)
     }
 
+    /// Watches configured IDs and immediately handles devices already attached.
     func watch(_ ids: [DeviceID]) {
         queue.async {
             self.writeState()
@@ -88,6 +94,7 @@ final class Blocker: @unchecked Sendable {
         }
     }
 
+    /// Registers a device or interface match and drains it to arm notifications.
     private func addMatching(_ id: DeviceID) {
         let matching: NSMutableDictionary
         if id.audioOnly {
@@ -117,9 +124,8 @@ final class Blocker: @unchecked Sendable {
         id.audioOnly ? drainInterfaces(iterator) : drainDevices(iterator)
     }
 
-    /// Captures each device once it finishes enumerating. Capturing a device that is
-    /// still being configured (e.g. a display waking up) lets macOS publish its
-    /// remaining interfaces anyway, and usbaudiod attaches to them.
+    /// Waits for enumeration before capture so late interfaces cannot escape it.
+    /// Devices still being configured could otherwise gain drivers after capture.
     private func drainDevices(_ iterator: io_iterator_t) {
         while case let service = IOIteratorNext(iterator), service != 0 {
             DispatchQueue.global().async { [self] in
@@ -133,6 +139,7 @@ final class Blocker: @unchecked Sendable {
         }
     }
 
+    /// Claims audio interfaces now, or queues held interfaces for an audio restart.
     private func drainInterfaces(_ iterator: io_iterator_t) {
         while case let service = IOIteratorNext(iterator), service != 0 {
             if property(service, "bInterfaceClass") == audioInterfaceClass, !claim(service) {
@@ -145,6 +152,7 @@ final class Blocker: @unchecked Sendable {
         if !pending.isEmpty { scheduleAudioRestart() }
     }
 
+    /// Detaches drivers through device capture and schedules CoreAudio cleanup.
     private func capture(_ service: io_service_t) {
         let id = entryID(service)
         let label = describe(service)
@@ -190,10 +198,8 @@ final class Blocker: @unchecked Sendable {
         return true
     }
 
-    /// Restarts usbaudiod once claims settle, so a burst of them costs one restart.
-    /// Devices behind one display or hub can arrive seconds apart, and launchd won't
-    /// respawn usbaudiod twice within 10s, so the wait is generous.
-    /// Pending interfaces are claimed in the gap before launchd respawns it.
+    /// Batches arrivals over 5s, then restarts usbaudiod and races to claim interfaces.
+    /// Makes at most three attempts if another client reclaims pending interfaces.
     private func scheduleAudioRestart() {
         pendingAudioRestart?.cancel()
         let work = DispatchWorkItem { [self] in
@@ -257,16 +263,19 @@ final class Blocker: @unchecked Sendable {
         }
     }
 
+    /// Returns the registry identity used to track a single device or interface.
     private func entryID(_ service: io_service_t) -> UInt64 {
         var id: UInt64 = 0
         IORegistryEntryGetRegistryEntryID(service, &id)
         return id
     }
 
+    /// Reads a registry property as the requested Swift type.
     private func property<T>(_ service: io_service_t, _ key: String) -> T? {
         IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? T
     }
 
+    /// Formats a device name and bus location for diagnostic logs.
     private func describe(_ service: io_service_t) -> String {
         let name: String = property(service, "USB Product Name") ?? property(service, "kUSBProductString") ?? "unknown"
         let location: Int = property(service, "locationID") ?? 0
